@@ -105,7 +105,7 @@ class FloatSource(Source):
     item in the source array.
     """
 
-    def __init__(self, id, data, components, xmlnode=None):
+    def __init__(self, id, data, components, xtype="",stride=0, xmlnode=None):
         """Create a float source instance.
 
         :param str id:
@@ -116,6 +116,10 @@ class FloatSource(Source):
           Tuple of strings describing the semantic of the data,
           e.g. ``('X','Y','Z')`` would cause :attr:`data` to be
           reshaped as ``(-1, 3)``
+        :param str xtype:
+          The type of the components, default is float but it could be float4x4
+        :param int stride:
+          The size of stride, default is automatic from number of components, but given for float4x4 matrices
         :param xmlnode:
           When loaded, the xmlnode it comes from.
 
@@ -128,6 +132,20 @@ class FloatSource(Source):
         self.data.shape = (-1, len(components) )
         self.components = components
         """Tuple of strings describing the semantic of the data, e.g. ``('X','Y','Z')``"""
+        self.ctype = xtype
+        """Component Type, special for TRANSFORM without type"""
+        self.stridelen = stride
+        """Stride"""
+        if self.ctype == "": #default
+            if len(components) == 1 and components[0] == "TRANSFORM":
+                self.ctype = "float4x4"
+            else:
+                ctype = "float"
+        if self.stridelen == 0: #default
+            if self.ctype == "float4x4":
+                self.stridelen = 16
+            else:
+                self.stridelen = len(self.components)
         if xmlnode != None:
             self.xmlnode = xmlnode
             """ElementTree representation of the source."""
@@ -137,20 +155,14 @@ class FloatSource(Source):
             rawlen = len( self.data )
             self.data.shape = (-1, len(self.components) )
             acclen = len( self.data )
-            if len(components) == 1 and components[0] == "TRANSFORM":
-                stridelen = 16
-                ctype = "float4x4"
-            else:
-                stridelen = len(self.components)
-                ctype = "float"
             sourcename = "%s-array"%self.id
 
             self.xmlnode = E.source(
                 E.float_array(txtdata, count=str(rawlen), id=sourcename),
                 E.technique_common(
                     E.accessor(
-                        *[E.param(type=ctype, name=c) for c in self.components]
-                    , **{'count':str(acclen), 'stride':str(stridelen), 'source':"#%s"%sourcename} )
+                        *[E.param(type=self.ctype, name=c) for c in self.components]
+                    , **{'count':str(acclen), 'stride':str(self.stridelen), 'source':"#%s"%sourcename} )
                 )
             , id=self.id )
 
@@ -164,6 +176,13 @@ class FloatSource(Source):
 
         txtdata = ' '.join(map(lambda x: '%.7g'%x , self.data.tolist()))
 
+        stridelen = self.stridelen
+        if stridelen == 0:
+            if self.ctype == "float4x4":
+                stridelen = 16
+            else:
+                stridelen = len(self.components)
+
         rawlen = len( self.data )
         self.data.shape = (-1, len(self.components) )
         acclen = len( self.data )
@@ -175,13 +194,12 @@ class FloatSource(Source):
         node.clear()
         node.set('count', str(acclen))
         node.set('source', '#'+self.id+'-array')
-        if len(self.components) == 1 and self.components[0] == "TRANSFORM":
-            node.set('stride', '16')
-            node.append(E.param(type='float4x4', name="TRANSFORM"))
-        else:
-            node.set('stride', str(len(self.components)))
-            for c in self.components:
-                node.append(E.param(type='float', name=c))
+        node.set('stride', str(stridelen))
+        for c in self.components:
+            if c is None:
+                node.append(E.param(type=self.ctype))
+            else:
+                node.append(E.param(type=self.ctype, name=c))
         self.xmlnode.set('id', self.id )
 
     @staticmethod
@@ -196,9 +214,16 @@ class FloatSource(Source):
             except ValueError: raise DaeMalformedError('Corrupted float array')
         data[numpy.isnan(data)] = 0
 
+        stridelen = int(node.attrib.get('stride','0'))
+
         paramnodes = node.findall('%s/%s/%s'%(tag('technique_common'), tag('accessor'), tag('param')))
         if not paramnodes: raise DaeIncompleteError('No accessor info in source node')
         components = [ param.get('name') for param in paramnodes ]
+        tcomponents = [ param.get('type') for param in paramnodes ]
+        if len(tcomponents) > 0:
+            xtype = tcomponents[0]
+        else:
+            xtype = "" # default
         if len(components) == 2 and components[0] == 'U' and components[1] == 'V':
             #U,V is used for "generic" arguments - convert to S,T
             components = ['S', 'T']
@@ -209,7 +234,7 @@ class FloatSource(Source):
             #TODO
             data = numpy.array(zip(data[:,0], data[:,1]))
             data.shape = (-1)
-        return FloatSource( sourceid, data, tuple(components), xmlnode=node )
+        return FloatSource( sourceid, data, tuple(components), xtype=xtype, stride=stridelen, xmlnode=node )
 
     def __str__(self): return '<FloatSource size=%d>' % (len(self),)
     def __repr__(self): return str(self)

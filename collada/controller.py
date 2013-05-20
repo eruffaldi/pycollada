@@ -259,7 +259,8 @@ class Skin(Controller):
                 weight_source, weight_joint_source, vcounts, index, offsets,
                 geometry, controllernode, skinnode)
     def save(self):
-        self.xmlnode = E.controller(id=self.controller_node["id"],name=self.controller_node["name"])        
+        cid = self.controller_node.attrib["id"]
+        self.xmlnode = E.controller(id=cid,name=self.controller_node.attrib.get("name",cid))
         xn = E.skin(source="#" + self.geometry.id)
         self.xmlnode.append(xn)
 
