@@ -23,6 +23,7 @@ from collada.common import DaeIncompleteError, DaeBrokenRefError, \
 from collada.geometry import Geometry
 from collada.util import checkSource
 from collada.xmlutil import etree as ElementTree
+from collada.common import E
 
 
 class Controller(DaeObject):
@@ -257,7 +258,59 @@ class Skin(Controller):
         return Skin(localscope, bind_shape_mat, joint_source, matrix_source,
                 weight_source, weight_joint_source, vcounts, index, offsets,
                 geometry, controllernode, skinnode)
+    def save(self):
+        self.xmlnode = E.controller(id=self.controller_node["id"],name=self.controller_node["name"])        
+        xn = E.skin(source="#" + self.geometry.id)
+        self.xmlnode.append(xn)
 
+        # bind matrix
+        if self.bind_shape_matrix is not None:
+            xn.append(E.bind_shape_matrix(' '.join(map(str, self.bind_shape_matrix.flat))))
+
+        # names of joints
+        a = self.sourcebyid[self.joint_source]
+        a.save();
+        xn.append(a.xmlnode)
+
+        # matrices before joints
+        a = self.sourcebyid[self.joint_matrix_source]
+        a.save();
+        xn.append(a.xmlnode)
+
+        # weights
+        a = self.sourcebyid[self.weight_source]
+        a.save();
+        xn.append(a.xmlnode)
+
+        # if list of weight joint names are not the same generate it
+        if self.weight_joint_source != self.joint_source:
+            a = self.sourcebyid[self.weight_joint_source]
+            a.save()
+            xn.append(a.xmlnode)
+
+        # specification of joints are joint names and matrices
+        jn = E.joints()
+        jn1 = E.input(semantic="JOINT",source="#" + self.joint_source)
+        jn2 = E.input(semantic="INV_BIND_MATRIX",source="#" + self.joint_matrix_source)
+        jn.append(jn1)
+        jn.append(jn2)
+        xn.append(jn)
+
+        # specification of influneces as originated from the joint names and weight sources
+        vw = E.vertex_weights(count=str(len(self.vcounts)))
+        jn1 = E.input(semantic="JOINT",source="#" + self.joint_source,offset=str(self.offsets[0]))
+        jn2 = E.input(semantic="WEIGHT",source="#" + self.weight_source,offset=str(self.offsets[1]))
+
+        # list of counts of influences per vertex
+        vcount = E.vcount(' '.join(map(str, self.vcounts.flat)))
+
+        # list of the influences
+        v = E.v(' '.join(map(str, self.vertex_weight_index.flat)))
+        vw.append(jn1)
+        vw.append(jn2)
+        vw.append(vcount)
+        vw.append(v)
+        xn.append(vw)
 
 class BoundSkin(BoundController):
     """A skin bound to a transform matrix and materials mapping."""

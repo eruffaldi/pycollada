@@ -137,14 +137,19 @@ class FloatSource(Source):
             rawlen = len( self.data )
             self.data.shape = (-1, len(self.components) )
             acclen = len( self.data )
-            stridelen = len(self.components)
+            if len(components) == 1 and components[0] == "TRANSFORM":
+                stridelen = 16
+                ctype = "float4x4"
+            else:
+                stridelen = len(self.components)
+                ctype = "float"
             sourcename = "%s-array"%self.id
 
             self.xmlnode = E.source(
                 E.float_array(txtdata, count=str(rawlen), id=sourcename),
                 E.technique_common(
                     E.accessor(
-                        *[E.param(type='float', name=c) for c in self.components]
+                        *[E.param(type=ctype, name=c) for c in self.components]
                     , **{'count':str(acclen), 'stride':str(stridelen), 'source':"#%s"%sourcename} )
                 )
             , id=self.id )
@@ -170,9 +175,13 @@ class FloatSource(Source):
         node.clear()
         node.set('count', str(acclen))
         node.set('source', '#'+self.id+'-array')
-        node.set('stride', str(len(self.components)))
-        for c in self.components:
-            node.append(E.param(type='float', name=c))
+        if len(self.components) == 1 and self.components[0] == "TRANSFORM":
+            node.set('stride', '16')
+            node.append(E.param(type='float4x4', name="TRANSFORM"))
+        else:
+            node.set('stride', str(len(self.components)))
+            for c in self.components:
+                node.append(E.param(type='float', name=c))
         self.xmlnode.set('id', self.id )
 
     @staticmethod
@@ -204,6 +213,7 @@ class FloatSource(Source):
 
     def __str__(self): return '<FloatSource size=%d>' % (len(self),)
     def __repr__(self): return str(self)
+
 
 class IDRefSource(Source):
     """Contains a source array of ID references, as defined in the collada
@@ -315,7 +325,7 @@ class NameSource(Source):
 
     """
 
-    def __init__(self, id, data, components, xmlnode=None):
+    def __init__(self, id, data, components, xtype="IDREF", xmlnode=None):
         """Create a name source instance.
 
         :param str id:
@@ -326,6 +336,8 @@ class NameSource(Source):
           Tuple of strings describing the semantic of the data,
           e.g. ``('JOINT')`` would cause :attr:`data` to be
           reshaped as ``(-1, 1)``
+        :param str xtype:
+          The type of the entities in the named source
         :param xmlnode:
           When loaded, the xmlnode it comes from.
 
@@ -333,6 +345,10 @@ class NameSource(Source):
 
         self.id = id
         """The unique string identifier for the source"""
+        self.type = xtype
+        """The type of the entities mentioned, e.g. IDREF or Name"""
+        if type(data) is list:
+            data = numpy.array( data, dtype=numpy.string_ )
         self.data = data
         """Numpy array with the source values. This will be shaped as ``(-1,N)`` where ``N = len(self.components)``"""
         self.data.shape = (-1, len(components) )
@@ -381,7 +397,7 @@ class NameSource(Source):
         node.set('source', '#'+self.id+'-array')
         node.set('stride', str(len(self.components)))
         for c in self.components:
-            node.append(E.param(type='IDREF', name=c))
+            node.append(E.param(type=self.type, name=c))
         self.xmlnode.set('id', self.id )
 
     @staticmethod
@@ -398,7 +414,12 @@ class NameSource(Source):
         paramnodes = node.findall('%s/%s/%s'%(tag('technique_common'), tag('accessor'), tag('param')))
         if not paramnodes: raise DaeIncompleteError('No accessor info in source node')
         components = [ param.get('name') for param in paramnodes ]
-        return NameSource( sourceid, data, tuple(components), xmlnode=node )
+        componenttypes = [ param.get('type','') for param in paramnodes ]
+        if len(componenttypes) == 1:
+            xtype = componenttypes[0]
+        else:
+            xtype = "IDREF"
+        return NameSource( sourceid, data, tuple(components), xtype=xtype, xmlnode=node )
 
     def __str__(self): return '<NameSource size=%d>' % (len(self),)
     def __repr__(self): return str(self)

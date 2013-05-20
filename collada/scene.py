@@ -327,6 +327,10 @@ class Node(SceneNode):
         """
         self.id = id
         """The unique string identifier for the node"""
+        self.type = ""
+        """The optional type specifier in node e.g. JOINT"""
+        self.sid = ""
+        """The optional local scope name"""
         self.children = []
         """A list of child nodes of this node. This can contain any
           object that inherits from :class:`collada.scene.SceneNode`"""
@@ -349,7 +353,11 @@ class Node(SceneNode):
             self.xmlnode = xmlnode
             """ElementTree representation of the transform."""
         else:
-            self.xmlnode = E.node(id=self.id, name=self.id)
+            self.xmlnode = E.node(id=self.id, name=self.id, type=self.type)
+            if self.type != "":
+                self.xmlnode.set("type",self.type)
+            if self.sid != "":
+                self.xmlnode.set("sid",self.sid)
             for t in self.transforms:
                 self.xmlnode.append(t.xmlnode)
             for c in self.children:
@@ -387,6 +395,14 @@ class Node(SceneNode):
         if self.id is not None:
             self.xmlnode.set('id', self.id)
             self.xmlnode.set('name', self.id)
+        if self.type != "":
+            self.xmlnode.set('type',self.type)
+        elif "type" in self.xmlnode.attrib:
+            del self.xmlnode.attrib["type"]
+        if self.sid != "":
+            self.xmlnode.set('sid',self.sid)
+        elif "sid" in self.xmlnode.attrib:
+            del self.xmlnode.attrib["sid"]
         for t in self.transforms:
             if t.xmlnode not in self.xmlnode:
                 self.xmlnode.append(t.xmlnode)
@@ -405,6 +421,9 @@ class Node(SceneNode):
         children = []
         transforms = []
 
+        sid = node.attrib.get("sid","")
+        xtype = node.attrib.get("type","")
+
         for subnode in node:
             try:
                 n = loadNode(collada, subnode, localscope)
@@ -415,7 +434,10 @@ class Node(SceneNode):
             except DaeError as ex:
                 collada.handleError(ex)
 
-        return Node(id, children, transforms, xmlnode=node)
+        n = Node(id, children, transforms, xmlnode=node)
+        n.sid = sid
+        n.type = xtype
+        return n
 
     def __str__(self):
         return '<Node transforms=%d, children=%d>' % (len(self.transforms), len(self.children))
@@ -570,7 +592,7 @@ class ControllerNode(SceneNode):
     """Represents a controller instance in a scene, as defined in the collada <instance_controller> tag. **This class is highly
     experimental. More support will be added in version 0.4.**"""
 
-    def __init__(self, controller, materials, xmlnode=None):
+    def __init__(self, controller, materials, skeletonroot=None, xmlnode=None):
         """Creates a controller node
 
         :param collada.controller.Controller controller:
@@ -579,6 +601,8 @@ class ControllerNode(SceneNode):
           A list containing items of type :class:`collada.scene.MaterialNode`.
           Each of these represents a material that the controller should be
           bound to.
+        :param Node skeletonroot:
+          The root of the skeleton object on which sid will be resolved
         :param xmlnode:
           When loaded, the xmlnode it comes from
 
@@ -589,6 +613,8 @@ class ControllerNode(SceneNode):
         self.materials = materials
         """A list containing items of type :class:`collada.scene.MaterialNode`.
           Each of these represents a material that the controller is bound to."""
+        self.skeleton = skeletonroot 
+        """A node that is the root of the hierarchy for lookup"""
         if xmlnode != None:
             self.xmlnode = xmlnode
             """ElementTree representation of the controller node."""
@@ -597,6 +623,9 @@ class ControllerNode(SceneNode):
             bindnode = ElementTree.Element( tag('bind_material') )
             technode = ElementTree.Element( tag('technique_common') )
             bindnode.append( technode )
+            if self.skeleton is not None:
+                skelnode = E.skeleton("#" + self.skeleton.id)
+                self.xmlnode.append(skelnode)
             self.xmlnode.append( bindnode )
             for mat in materials: technode.append( mat.xmlnode )
 
@@ -613,22 +642,42 @@ class ControllerNode(SceneNode):
     def load( collada, node ):
         url = node.get('url')
         if not url.startswith('#'): raise DaeMalformedError('Invalid url in controller instance %s' % url)
+
         controller = collada.controllers.get(url[1:])
         if not controller: raise DaeBrokenRefError('Controller %s not found in library'%url)
         matnodes = node.findall('%s/%s/%s'%( tag('bind_material'), tag('technique_common'), tag('instance_material') ) )
         materials = []
         for matnode in matnodes:
             materials.append( MaterialNode.load(collada, matnode) )
-        return ControllerNode( controller, materials, xmlnode=node)
+        skelnode = node.find("skeleton")
+        if skelnode is None:
+            skeleton = None
+        else:
+            skelurl = skelnode.text
+            if not skelurl.startswith('#'): raise DaeMalformedError('Invalid skeleton in controller instance %s' % skelurl)
+            skeleton = collada.nodes.get(skelurl[1:])
+        return ControllerNode( controller, materials, skeletonroot=skeleton, xmlnode=node)
 
     def save(self):
         """Saves the controller node back to :attr:`xmlnode`"""
         self.xmlnode.set('url', '#'+self.controller.id)
+        skelnode = self.xmlnode.find(tag("skeleton"))
+        if self.skeleton is not None:
+            if skelnode is None:
+                skelnode = E.skeleton("#" + self.skeleton.id)
+                self.xmlnode.append(skelnode)        
+            else:
+                skelnode.text = "#" + self.skeleton.id
+        elif skelnode is not None:
+            self.xmlnode.remove("skeleton")
         for mat in self.materials:
             mat.save()
 
     def __str__(self):
-        return '<ControllerNode controller=%s>' % (self.controller.id,)
+        if self.skeleton is not None:
+            return '<ControllerNode controller=%s skeleton=%s>' % (self.controller.id,self.skeleton.id)
+        else:
+            return '<ControllerNode controller=%s>' % (self.controller.id,)
 
     def __repr__(self):
         return str(self)
